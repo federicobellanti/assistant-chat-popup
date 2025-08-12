@@ -1,67 +1,95 @@
+// app/api/chat/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 
+// Vercel-friendly settings
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 60;
+
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
+  // If you use them, you can also include:
+  // organization: process.env.OPENAI_ORGANIZATION,
+  // project: process.env.OPENAI_PROJECT,
 });
+
+// --- helpers (declare at module scope to avoid strict-mode errors) ---
+
+async function waitForRun(threadId: string, runId: string, timeoutMs = 60000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const run = await client.beta.threads.runs.retrieve(threadId, runId);
+    if (run.status === "completed") return;
+    if (
+      run.status === "failed" ||
+      run.status === "cancelled" ||
+      run.status === "expired" ||
+      run.status === "incomplete"
+    ) {
+      throw new Error(`Run ended with status: ${run.status}`);
+    }
+    await new Promise((r) => setTimeout(r, 800));
+  }
+  throw new Error("Timeout waiting for run.");
+}
+
+const getAssistantText = (msg: any): string => {
+  if (!msg?.content) return "";
+  const parts: string[] = [];
+  for (const c of msg.content) {
+    // Common v2 text block: { type: "text", text: { value: string } }
+    if (c && c.type === "text" && c.text && typeof c.text.value === "string") {
+      parts.push(c.text.value);
+    }
+    // Some tool outputs: { type: "output_text", text: string }
+    else if (c && c.type === "output_text" && typeof c.text === "string") {
+      parts.push(c.text);
+    }
+  }
+  return parts.join("\n\n").trim();
+};
+
+// --- route handler ---
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const { assistant_id, thread_id, message } = body;
+    const { assistant_id, thread_id, message } = await req.json();
 
-    if (!assistant_id || !thread_id) {
+    if (!assistant_id || !thread_id || typeof message !== "string") {
       return NextResponse.json(
-        { error: "Missing assistant_id or thread_id" },
+        { error: "assistant_id, thread_id, and message are required." },
         { status: 400 }
       );
     }
 
-    // Create the user message
+    // 1) Add user message to the thread
     await client.beta.threads.messages.create(thread_id, {
       role: "user",
       content: message,
     });
 
-    // Run the assistant
-    await client.beta.threads.runs.create(thread_id, {
+    // 2) Create a run
+    const run = await client.beta.threads.runs.create(thread_id, {
       assistant_id,
     });
 
-    // Wait briefly to let the run complete
-    await new Promise((r) => setTimeout(r, 2000));
+    // 3) Wait for completion (robust vs fixed delay)
+    await waitForRun(thread_id, run.id);
 
-    // Get the latest assistant message
+    // 4) Fetch only the latest assistant message
     const list = await client.beta.threads.messages.list(thread_id, {
       order: "desc",
       limit: 10,
     });
     const latestAssistant = list.data.find((m) => m.role === "assistant");
+    const text = getAssistantText(latestAssistant) || "";
 
-    function getAssistantText(msg: any): string {
-      if (!msg?.content) return "";
-      const parts: string[] = [];
-      for (const c of msg.content) {
-        if (c && c.type === "text" && c.text && typeof c.text.value === "string") {
-          parts.push(c.text.value);
-        } else if (
-          c &&
-          c.type === "output_text" &&
-          typeof c.text === "string"
-        ) {
-          parts.push(c.text);
-        }
-      }
-      return parts.join("\n\n").trim();
-    }
-
-    const text = getAssistantText(latestAssistant);
-
-    return NextResponse.json({ ok: true, text });
+    return NextResponse.json({ ok: true, text }, { status: 200 });
   } catch (error: any) {
     console.error(error);
     return NextResponse.json(
-      { error: error.message || "Unknown error" },
+      { error: error?.message ?? "Unknown error" },
       { status: 500 }
     );
   }
