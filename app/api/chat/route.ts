@@ -3,48 +3,66 @@ import OpenAI from "openai";
 
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
-  organization: process.env.OPENAI_ORGANIZATION, // optional
-  project: process.env.OPENAI_PROJECT,           // optional
 });
-
-async function waitForRun(threadId: string, runId: string, timeoutMs = 60000) {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const run = await client.beta.threads.runs.retrieve(threadId, runId);
-    if (run.status === "completed") return;
-    if (["failed","cancelled","expired","incomplete"].includes(run.status as string)) {
-      throw new Error(`Run ended with status: ${run.status}`);
-    }
-    await new Promise(r => setTimeout(r, 800));
-  }
-  throw new Error("Timeout waiting for run.");
-}
 
 export async function POST(req: NextRequest) {
   try {
-    const { assistant_id, thread_id, message } = await req.json();
-    if (!assistant_id || !thread_id || !message) {
-      return NextResponse.json({ error: "assistant_id, thread_id, message are required." }, { status: 400 });
+    const body = await req.json();
+    const { assistant_id, thread_id, message } = body;
+
+    if (!assistant_id || !thread_id) {
+      return NextResponse.json(
+        { error: "Missing assistant_id or thread_id" },
+        { status: 400 }
+      );
     }
 
-    await client.beta.threads.messages.create(thread_id, { role: "user", content: message });
-    const run = await client.beta.threads.runs.create(thread_id, { assistant_id });
-    await waitForRun(thread_id, run.id);
+    // Create the user message
+    await client.beta.threads.messages.create(thread_id, {
+      role: "user",
+      content: message,
+    });
 
-    // Get only the MOST RECENT assistant message
-	const list = await client.beta.threads.messages.list(thread_id, { order: "desc", limit: 10 });
-	const latestAssistant = list.data.find(m => m.role === "assistant");
+    // Run the assistant
+    await client.beta.threads.runs.create(thread_id, {
+      assistant_id,
+    });
 
-	const text =
-  	latestAssistant?.content
-    		.filter(c => c.type === "text")
-    		.map(c => c.text.value)
-    		.join("\n\n")
-    		.trim() ?? "";
+    // Wait briefly to let the run complete
+    await new Promise((r) => setTimeout(r, 2000));
 
+    // Get the latest assistant message
+    const list = await client.beta.threads.messages.list(thread_id, {
+      order: "desc",
+      limit: 10,
+    });
+    const latestAssistant = list.data.find((m) => m.role === "assistant");
 
-    return NextResponse.json({ ok: true, text }, { status: 200 });
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message || String(err) }, { status: 500 });
+    function getAssistantText(msg: any): string {
+      if (!msg?.content) return "";
+      const parts: string[] = [];
+      for (const c of msg.content) {
+        if (c && c.type === "text" && c.text && typeof c.text.value === "string") {
+          parts.push(c.text.value);
+        } else if (
+          c &&
+          c.type === "output_text" &&
+          typeof c.text === "string"
+        ) {
+          parts.push(c.text);
+        }
+      }
+      return parts.join("\n\n").trim();
+    }
+
+    const text = getAssistantText(latestAssistant);
+
+    return NextResponse.json({ ok: true, text });
+  } catch (error: any) {
+    console.error(error);
+    return NextResponse.json(
+      { error: error.message || "Unknown error" },
+      { status: 500 }
+    );
   }
 }
