@@ -31,14 +31,17 @@ export async function POST(req: NextRequest) {
     const run = await client.beta.threads.runs.create(thread_id, { assistant_id });
     await waitForRun(thread_id, run.id);
 
-    const list = await client.beta.threads.messages.list(thread_id, { order: "desc", limit: 10 });
-    const text = list.data
-      .filter(m => m.role === "assistant")
-      .flatMap(m => m.content)
-      .filter(c => c.type === "text")
-      .map(c => (c.type === "text" ? c.text.value : ""))
-      .join("\n\n")
-      .trim();
+    // Get only the MOST RECENT assistant message
+	const list = await client.beta.threads.messages.list(thread_id, { order: "desc", limit: 10 });
+	const latestAssistant = list.data.find(m => m.role === "assistant");
+
+	const text =
+  	latestAssistant?.content
+    		.filter(c => c.type === "text")
+    		.map(c => c.text.value)
+    		.join("\n\n")
+    		.trim() ?? "";
+
 
     return NextResponse.json({ ok: true, text }, { status: 200 });
   } catch (err: any) {
