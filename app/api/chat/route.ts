@@ -19,7 +19,12 @@ const MAX_CHARS = 4000; // adjust later if you want
 const EXPECTED_ASSISTANT = process.env.EXPECTED_ASSISTANT_ID || "";
 const EXPECTED_THREAD = process.env.EXPECTED_THREAD_ID || "";
 
-// Strip inline KB-style citations (e.g.,  or [12:...])
+// -------- Studio Bellanti contact line (used on refusal/fallback) -----
+const contactLine =
+  "Non dispongo di informazioni sufficienti nella documentazione del modello HairBar per rispondere con certezza. " +
+  "Ti invito a contattare direttamente lo Studio Bellanti: info@studiobellanti.com oppure al numero consueto.";
+
+// -------- Strip inline KB-style citations (e.g.,  or [12:...]) ----
 const stripCitations = (s: string) =>
   s
     .replace(/\u3010[\s\S]*?\u3011/g, "") // 【 ... 】
@@ -27,7 +32,47 @@ const stripCitations = (s: string) =>
     .replace(/\s{2,}/g, " ")
     .trim();
 
-// Wait for a run to finish
+// -------- VERY lightweight scope heuristic (fast, no extra API call) ---
+function isInScope(msg: string): boolean {
+  const s = (msg || "").toLowerCase();
+
+  // Strong indicators (model name / sheets / flows)
+  const strong = [
+    "hairbar", "hair bar", "haibar", // typos/variants
+    "conto economico", "cash flow", "flusso di cassa", "stato patrimoniale",
+    "scenario builder", "dashboard", "report", "foglio", "sheet", "workbook",
+    "excel", "formula", "celle", "macro", "piano finanziario",
+    "ricavi", "costi", "capex", "depre", "ammortament", "tfr", "oic", "ifrs",
+    "working capital", "fornitori", "magazzino", "inventario", "debiti", "crediti",
+  ];
+  if (strong.some(k => s.includes(k))) return true;
+
+  // Generic finance/model words + question verbs (helps short queries)
+  const maybe = [
+    "modello", "model", "finanziar", "conto", "cassa", "bilancio", "price", "prezzo", "volume",
+    "iva", "vat", "costo", "margine", "budget", "forecast", "scenario",
+  ];
+  const verbs = ["come", "dove", "in quale", "which", "how", "where", "update", "imposta", "aggiorna", "calcola"];
+  const hitMaybe = maybe.some(k => s.includes(k));
+  const hitVerb = verbs.some(v => s.includes(v));
+  return hitMaybe && hitVerb;
+}
+
+// -------- Decide when to replace answer with contact info ---------------
+function shouldUseContactFallback(text: string): boolean {
+  const t = (text || "").toLowerCase().trim();
+  if (!t) return true;                                  // empty = fallback
+  // Common “can’t answer” phrases (IT/EN)
+  const unsure = [
+    "non sono in grado", "non dispongo", "non posso rispondere",
+    "non ho informazioni sufficienti", "non riesco a trovare",
+    "i'm not able", "i cannot answer", "i don't have enough information",
+    "i don't have sufficient information", "unable to answer",
+  ];
+  return unsure.some(p => t.includes(p));
+}
+
+// -------- Wait for a run to finish -------------------------------------
 async function waitForRun(threadId: string, runId: string, timeoutMs = 60000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -44,7 +89,7 @@ async function waitForRun(threadId: string, runId: string, timeoutMs = 60000) {
   throw new Error("Timeout waiting for run.");
 }
 
-// Extract only text parts from the newest assistant message
+// -------- Extract only text parts from the newest assistant message -----
 const getAssistantText = (msg: any): string => {
   if (!msg?.content) return "";
   const out: string[] = [];
@@ -55,6 +100,7 @@ const getAssistantText = (msg: any): string => {
   return stripCitations(out.join("\n\n"));
 };
 
+// ----------------------------- ROUTE -----------------------------------
 export async function POST(req: NextRequest) {
   try {
     // --- Throttle ---
@@ -93,22 +139,34 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Thread not allowed." }, { status: 403 });
     }
 
+    // --- PRE-FILTER: block unrelated queries before hitting the Assistant ---
+    if (!isInScope(message)) {
+      // Short, polite refusal + redirect to Studio Bellanti
+      return NextResponse.json(
+        {
+          ok: true,
+          text:
+            "Sono focalizzato esclusivamente sul modello HairBar (struttura, logiche, report e utilizzo in Excel). " +
+            contactLine,
+        },
+        { status: 200 }
+      );
+    }
+
     // --- Add user message to the thread ---
     await client.beta.threads.messages.create(thread_id, {
       role: "user",
       content: message,
     });
 
-    // --- Create run with extra guardrails (does NOT change your base instructions) ---
+    // --- Create run with extra guardrails (re-enforces scope on the model) ---
     const run = await client.beta.threads.runs.create(thread_id, {
       assistant_id,
       additional_instructions: `
-You must follow these constraints in addition to your base instructions:
-- Stay strictly within the HairBar model scope. If a request is unrelated, refuse briefly and redirect.
-- Always answer in the user's language.
-- Do not expose file names, paths, vector-store IDs, or inline citation markers. Do not include bracketed citations like 【12:...】 in the final text.
-- Be concise and practical. Use short lists/steps when guiding actions.
-      `.trim(),
+Stay strictly within the HairBar model scope (sheets, calculations, inputs/outputs, workflows). 
+If the documentation does not support a confident answer, do NOT guess; return a concise refusal and invite the user to contact Studio Bellanti at info@studiobellanti.com or their usual phone number. 
+Never include raw file names/paths/IDs or bracketed citations (e.g., 【12:...】) in the final text. 
+Answer in the user's language and be concise (lists/steps when helpful).`.trim(),
     });
 
     await waitForRun(thread_id, run.id);
@@ -116,7 +174,12 @@ You must follow these constraints in addition to your base instructions:
     // --- Newest assistant message only ---
     const list = await client.beta.threads.messages.list(thread_id, { order: "desc", limit: 10 });
     const latestAssistant = list.data.find((m) => m.role === "assistant");
-    const text = getAssistantText(latestAssistant) || "";
+    let text = getAssistantText(latestAssistant) || "";
+
+    // --- POST-FILTER: if answer is empty/unsure, show Studio Bellanti contact ---
+    if (shouldUseContactFallback(text)) {
+      text = contactLine;
+    }
 
     return NextResponse.json({ ok: true, text }, { status: 200 });
   } catch (error: any) {
