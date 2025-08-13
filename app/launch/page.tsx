@@ -2,39 +2,63 @@
 import { useEffect, useState } from 'react';
 
 export default function Launch() {
-  const [status, setStatus] = useState<'idle'|'opened'|'blocked'>('idle');
+  const [status, setStatus] = useState<'idle'|'opened'|'blocked'|'error'>('idle');
   const [chatUrl, setChatUrl] = useState<string>('');
   const [features, setFeatures] = useState<string>('');
+  const [err, setErr] = useState<string>('');
 
   useEffect(() => {
-    const p = new URLSearchParams(window.location.search);
-    const assistantId = p.get('assistant_id') || '';
-    const threadId = p.get('thread_id') || '';
-    const title = p.get('title') || 'AI Assistant';
+    (async () => {
+      const p = new URLSearchParams(window.location.search);
+      const token = p.get('token');
 
-    // Default popup size per your spec; allow optional overrides via ?w=&h=
-    const w = Number(p.get('w') || 420);
-    const h = Number(p.get('h') || 640);
+      // Default popup size; override via ?w=&h=
+      const w = Number(p.get('w') || 420);
+      const h = Number(p.get('h') || 640);
+      const x = window.screenX + Math.max(0, (window.outerWidth - w) / 2);
+      const y = window.screenY + Math.max(0, (window.outerHeight - h) / 2);
+      const feat =
+        `popup=yes,width=${w},height=${h},left=${Math.round(x)},top=${Math.round(y)},` +
+        `menubar=no,toolbar=no,location=no,status=no,scrollbars=yes,resizable=yes`;
+      setFeatures(feat);
 
-    // Center on screen
-    const x = window.screenX + Math.max(0, (window.outerWidth - w) / 2);
-    const y = window.screenY + Math.max(0, (window.outerHeight - h) / 2);
+      try {
+        let assistantId = '';
+        let threadId = '';
+        let title = 'AI Assistant';
 
-    const url = `/chat?assistant_id=${encodeURIComponent(assistantId)}&thread_id=${encodeURIComponent(threadId)}&title=${encodeURIComponent(title)}`;
-    setChatUrl(url);
+        if (token) {
+          // Resolve the token server-side for real values
+          const res = await fetch(`/api/token/resolve?token=${encodeURIComponent(token)}`, { cache: 'no-store' });
+          const data = await res.json();
+          if (!data?.ok) throw new Error(data?.error || 'Token resolve failed');
+          assistantId = data.assistant_id;
+          threadId = data.thread_id;
+          title = data.title || title;
+        } else {
+          // Fallback: explicit ids (legacy)
+          assistantId = p.get('assistant_id') || '';
+          threadId = p.get('thread_id') || '';
+          title = p.get('title') || title;
+        }
 
-    const feat =
-      `popup=yes,width=${w},height=${h},left=${Math.round(x)},top=${Math.round(y)},` +
-      `menubar=no,toolbar=no,location=no,status=no,scrollbars=yes,resizable=yes`;
-    setFeatures(feat);
+        if (!assistantId || !threadId) throw new Error('Missing assistant or thread.');
 
-    const popup = window.open(url, 'assistant_popup', feat);
-    if (popup && !popup.closed) {
-      popup.focus?.();
-      setStatus('opened');
-    } else {
-      setStatus('blocked');
-    }
+        const url = `/chat?assistant_id=${encodeURIComponent(assistantId)}&thread_id=${encodeURIComponent(threadId)}&title=${encodeURIComponent(title)}`;
+        setChatUrl(url);
+
+        const popup = window.open(url, 'assistant_popup', feat);
+        if (popup && !popup.closed) {
+          popup.focus?.();
+          setStatus('opened');
+        } else {
+          setStatus('blocked');
+        }
+      } catch (e: any) {
+        setErr(e?.message || String(e));
+        setStatus('error');
+      }
+    })();
   }, []);
 
   function openManually() {
@@ -63,6 +87,7 @@ export default function Launch() {
           </button>
         </>
       )}
+      {status === 'error' && <p style={{ color: 'crimson' }}>Could not launch: {err}</p>}
       {status === 'idle' && <p>Attempting to open…</p>}
     </div>
   );
