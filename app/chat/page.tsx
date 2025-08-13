@@ -6,13 +6,13 @@ import { useSearchParams } from 'next/navigation';
 
 type Msg = { role: 'user' | 'assistant'; text: string };
 
-// ---- Brand tokens from your palette ----
+// ---- Brand tokens ----
 const BRAND = {
-  primary: '#708471',      // user bubble background
+  primary: '#708471',
   primaryText: '#FFFFFF',
-  cta: '#EE7F9C',          // Ask button (your palette)
-  surface: '#F8E8EB',      // assistant bubble background
-  bg: '#F3F3F3',           // app background
+  cta: '#EE7F9C',
+  surface: '#F8E8EB',
+  bg: '#F3F3F3',
   text: '#121212',
   subtle: '#9AA79B',
   border: '#E5E7EB',
@@ -21,7 +21,6 @@ const BRAND = {
 // Remove inline KB citations like 
 function stripCitations(s: string) {
   try {
-    // fullwidth brackets 【 ... 】 and any \[\d+:...]
     return s
       .replace(/\u3010[\s\S]*?\u3011/g, '') // 【 ... 】
       .replace(/\[\d+:[^\]]*?\]/g, '')
@@ -78,77 +77,126 @@ function ChatInner() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: BRAND.bg, color: BRAND.text }}>
-      {/* Header: logo (left) + title (right). No IDs shown. */}
-      <header className="px-3 py-2 shadow bg-white flex items-center justify-between">
-        <img src="/logo.png" alt="logo" width={22} height={22} />
-        <h1 className="text-base font-semibold" style={{ color: BRAND.text }}>{title}</h1>
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: BRAND.bg, color: BRAND.text }}>
+      {/* HEADER: force single row with space-between */}
+      <header
+        style={{
+          padding: '8px 12px',
+          background: '#fff',
+          boxShadow: '0 1px 2px rgba(0,0,0,.05)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+        }}
+      >
+        <img
+          src="/logo.png"
+          alt="logo"
+          width={22}
+          height={22}
+          style={{ display: 'block' }}
+        />
+        <h1
+          style={{
+            margin: 0,
+            fontSize: 16,
+            fontWeight: 600,
+            color: BRAND.text,
+            whiteSpace: 'nowrap',    // keep title on the same line
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+          }}
+        >
+          {title}
+        </h1>
       </header>
 
-      {/* Messages */}
-      <div ref={boxRef} className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
+      {/* MESSAGES */}
+      <div ref={boxRef} style={{ flex: 1, overflowY: 'auto', padding: '12px 12px' }}>
         {messages.map((m, i) => {
           const isUser = m.role === 'user';
           return (
-            <div key={i} className={isUser ? 'text-right' : 'text-left'}>
+            <div key={i} style={{ textAlign: isUser ? 'right' : 'left', marginBottom: 8 }}>
               <div
-                className="inline-block rounded-2xl px-3 py-2 max-w-[95%]"
                 style={{
+                  display: 'inline-block',
+                  borderRadius: 16,
+                  padding: '8px 12px',
+                  maxWidth: '96%',
                   background: isUser ? BRAND.primary : BRAND.surface,
                   color: isUser ? BRAND.primaryText : BRAND.text,
                   border: isUser ? 'none' : `1px solid ${BRAND.border}`,
                 }}
               >
-                <div className="text-[11px] mb-1" style={{ color: isUser ? 'rgba(255,255,255,0.85)' : BRAND.subtle }}>
+                <div style={{ fontSize: 11, marginBottom: 4, color: isUser ? 'rgba(255,255,255,.85)' : BRAND.subtle }}>
                   {isUser ? 'you' : 'assistant'}
                 </div>
-                <div className="whitespace-pre-wrap text-[15px] leading-6">{m.text}</div>
+                <div style={{ whiteSpace: 'pre-wrap', fontSize: 15, lineHeight: '22px' }}>{m.text}</div>
               </div>
             </div>
           );
         })}
         {busy && (
-          <div className="text-left">
-            <span className="italic text-sm" style={{ color: BRAND.subtle }}>thinking…</span>
+          <div style={{ textAlign: 'left' }}>
+            <span style={{ fontStyle: 'italic', fontSize: 13, color: BRAND.subtle }}>thinking…</span>
           </div>
         )}
       </div>
 
-      {/* Composer: textarea fills the row; Ask button tall & same height */}
-      <div className="p-2 bg-white border-t" style={{ borderColor: BRAND.border }}>
-        <div className="flex gap-2 items-stretch">
+      {/* COMPOSER: full-width row (textarea grows, button fixed); same height */}
+      <div style={{ padding: 8, background: '#fff', borderTop: `1px solid ${BRAND.border}` }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'stretch',
+            gap: 8,
+            width: '100%',
+            boxSizing: 'border-box',
+          }}
+        >
           <textarea
-            className="flex-1 rounded-xl border px-3 py-2"
             rows={4}
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={onKey}
             placeholder="Type your question…"
             style={{
-              borderColor: BRAND.border,
+              flex: '1 1 auto',   // grow to fill remaining space
+              minWidth: 0,        // allow shrinking in flex row (important!)
+              borderRadius: 12,
+              border: `1px solid ${BRAND.border}`,
+              padding: '10px 12px',
               fontSize: 15,
               lineHeight: '22px',
-              minHeight: 96,          // taller input
               resize: 'vertical',
+              minHeight: 96,
+              background: '#fff',
+              color: BRAND.text,
             }}
           />
           <button
             onClick={send}
             disabled={busy}
-            className="rounded-xl px-4 text-base font-medium h-full"
+            title="Ask (Enter to send; Shift+Enter for newline)"
             style={{
+              width: 108,               // fixed width; textarea uses the rest
+              border: 'none',
+              borderRadius: 12,
               background: BRAND.cta,
-              color: '#FFFFFF',
+              color: '#fff',
+              fontSize: 16,
+              fontWeight: 600,
+              padding: '0 16px',
               boxShadow: '0 1px 2px rgba(0,0,0,.12)',
-              width: 96,              // fixed CTA width, rest is textarea
+              cursor: busy ? 'default' : 'pointer',
               opacity: busy ? 0.6 : 1,
             }}
-            title="Ask (Enter to send; Shift+Enter for newline)"
           >
             Ask
           </button>
         </div>
-        <div className="text-[11px] mt-1" style={{ color: BRAND.subtle }}>
+        <div style={{ fontSize: 11, marginTop: 6, color: BRAND.subtle }}>
           Press Enter to send • Shift+Enter for a new line
         </div>
       </div>
