@@ -4,41 +4,44 @@ import { useEffect, useState } from 'react';
 export default function Launch() {
   const [status, setStatus] = useState<'idle'|'opened'|'blocked'>('idle');
   const [chatUrl, setChatUrl] = useState<string>('');
+  const [features, setFeatures] = useState<string>('');
 
   useEffect(() => {
     const p = new URLSearchParams(window.location.search);
     const assistantId = p.get('assistant_id') || '';
     const threadId = p.get('thread_id') || '';
-    const title = p.get('title') || 'Model Assistant';
+    const title = p.get('title') || 'AI Assistant';
+
+    // Popup size: your spec (320 x 500). Allow optional overrides via ?w=..&h=..
+    const w = Number(p.get('w') || 320);
+    const h = Number(p.get('h') || 500);
+
+    // Center on screen
+    const x = window.screenX + Math.max(0, (window.outerWidth - w) / 2);
+    const y = window.screenY + Math.max(0, (window.outerHeight - h) / 2);
 
     const url = `/chat?assistant_id=${encodeURIComponent(assistantId)}&thread_id=${encodeURIComponent(threadId)}&title=${encodeURIComponent(title)}`;
     setChatUrl(url);
 
-    // Try to open immediately (may be blocked if not a user gesture)
-    const w = 430, h = 640;
-    const x = window.screenX + Math.max(0, (window.outerWidth - w) / 2);
-    const y = window.screenY + Math.max(0, (window.outerHeight - h) / 2);
-    const popup = window.open(url, 'assistant_popup',
-      `popup=yes,width=${w},height=${h},left=${x},top=${y},resizable=yes`
-    );
+    const feat =
+      `popup=yes,width=${w},height=${h},left=${Math.round(x)},top=${Math.round(y)},` +
+      `menubar=no,toolbar=no,location=no,status=no,scrollbars=yes,resizable=yes`;
+    setFeatures(feat);
 
+    // Try to open automatically
+    const popup = window.open(url, 'assistant_popup', feat);
     if (popup && !popup.closed) {
+      popup.focus?.();
       setStatus('opened');
-      // Do NOT auto-close this tab; Excel launches may not count as user gestures.
-      // Users can close this tab manually.
     } else {
-      setStatus('blocked');
+      setStatus('blocked'); // show button if blocked
     }
   }, []);
 
   function openManually() {
-    const w = 430, h = 640;
-    const x = window.screenX + Math.max(0, (window.outerWidth - w) / 2);
-    const y = window.screenY + Math.max(0, (window.outerHeight - h) / 2);
-    const popup = window.open(chatUrl, 'assistant_popup',
-      `popup=yes,width=${w},height=${h},left=${x},top=${y},resizable=yes`
-    );
-    if (popup && !popup.closed) {
+    const win = window.open(chatUrl, 'assistant_popup', features);
+    if (win && !win.closed) {
+      win.focus?.();
       setStatus('opened');
     } else {
       setStatus('blocked');
@@ -47,20 +50,27 @@ export default function Launch() {
   }
 
   return (
-    <div style={{padding: 16, fontFamily: 'system-ui, sans-serif'}}>
-      <h1 style={{marginTop:0}}>Launching chat…</h1>
+    <div style={{ padding: 16, fontFamily: 'system-ui, sans-serif' }}>
+      <h1 style={{ marginTop: 0 }}>Launching AI Assistant…</h1>
       {status === 'opened' && (
-        <p>Popup opened. You can close this tab whenever you like.</p>
+        <p>Popup opened. If you don’t see it, check your taskbar or allow popups.</p>
       )}
       {status === 'blocked' && (
         <>
-          <p>It looks like your browser blocked the popup.</p>
-          <button onClick={openManually} style={{padding: '8px 12px', borderRadius: 8, border: '1px solid #000', background: '#000', color: '#fff'}}>
+          <p>Your browser blocked the popup. Click below to open it.</p>
+          <button
+            onClick={openManually}
+            style={{
+              padding: '8px 12px',
+              borderRadius: 8,
+              background: '#121212',
+              color: '#fff',
+              border: 'none',
+              cursor: 'pointer',
+            }}
+          >
             Open Chat
           </button>
-          <p style={{marginTop: 8}}>
-            If it still doesn’t open, enable popups for this site and click again.
-          </p>
         </>
       )}
       {status === 'idle' && <p>Attempting to open…</p>}
