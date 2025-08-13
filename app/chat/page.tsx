@@ -8,15 +8,29 @@ type Msg = { role: 'user' | 'assistant'; text: string };
 
 // ---- Brand tokens from your palette ----
 const BRAND = {
-  primary: '#708471',      // button + user bubble
+  primary: '#708471',      // user bubble background
   primaryText: '#FFFFFF',
-  accent: '#EE7F9C',       // optional highlight
-  surface: '#F8E8EB',      // assistant bubble bg (soft pink)
+  cta: '#EE7F9C',          // Ask button (your palette)
+  surface: '#F8E8EB',      // assistant bubble background
   bg: '#F3F3F3',           // app background
   text: '#121212',
-  subtle: '#A0A0A0',
+  subtle: '#9AA79B',
   border: '#E5E7EB',
 };
+
+// Remove inline KB citations like 
+function stripCitations(s: string) {
+  try {
+    // fullwidth brackets 【 ... 】 and any \[\d+:...]
+    return s
+      .replace(/\u3010[\s\S]*?\u3011/g, '') // 【 ... 】
+      .replace(/\[\d+:[^\]]*?\]/g, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+  } catch {
+    return s;
+  }
+}
 
 function ChatInner() {
   const p = useSearchParams();
@@ -52,10 +66,8 @@ function ChatInner() {
         body: JSON.stringify({ assistant_id: assistantId, thread_id: threadId, message: question }),
       });
       const data = await res.json();
-      setMessages(m => [
-        ...m,
-        { role: 'assistant', text: data?.ok ? (data.text || '(no text)') : `Error: ${data?.error || 'unknown'}` },
-      ]);
+      const answer = data?.ok ? (data.text || '(no text)') : `Error: ${data?.error || 'unknown'}`;
+      setMessages(m => [...m, { role: 'assistant', text: stripCitations(answer) }]);
     } catch (e: any) {
       setMessages(m => [...m, { role: 'assistant', text: `Network error: ${e?.message || e}` }]);
     } finally { setBusy(false); }
@@ -67,10 +79,9 @@ function ChatInner() {
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: BRAND.bg, color: BRAND.text }}>
-      {/* Header: logo + title (no IDs) */}
-      <header className="px-3 py-2 shadow bg-white flex items-center gap-2">
-        {/* Put your logo at /public/logo.png */}
-        <img src="/logo.png" alt="logo" width={20} height={20} />
+      {/* Header: logo (left) + title (right). No IDs shown. */}
+      <header className="px-3 py-2 shadow bg-white flex items-center justify-between">
+        <img src="/logo.png" alt="logo" width={22} height={22} />
         <h1 className="text-base font-semibold" style={{ color: BRAND.text }}>{title}</h1>
       </header>
 
@@ -81,17 +92,17 @@ function ChatInner() {
           return (
             <div key={i} className={isUser ? 'text-right' : 'text-left'}>
               <div
-                className="inline-block rounded-2xl px-3 py-2 max-w-[85%]"
+                className="inline-block rounded-2xl px-3 py-2 max-w-[95%]"
                 style={{
                   background: isUser ? BRAND.primary : BRAND.surface,
                   color: isUser ? BRAND.primaryText : BRAND.text,
                   border: isUser ? 'none' : `1px solid ${BRAND.border}`,
                 }}
               >
-                <div className="text-[11px] mb-1" style={{ color: isUser ? 'rgba(255,255,255,0.9)' : BRAND.subtle }}>
+                <div className="text-[11px] mb-1" style={{ color: isUser ? 'rgba(255,255,255,0.85)' : BRAND.subtle }}>
                   {isUser ? 'you' : 'assistant'}
                 </div>
-                <div className="whitespace-pre-wrap text-[14px] leading-5">{m.text}</div>
+                <div className="whitespace-pre-wrap text-[15px] leading-6">{m.text}</div>
               </div>
             </div>
           );
@@ -103,40 +114,43 @@ function ChatInner() {
         )}
       </div>
 
-      {/* Composer */}
+      {/* Composer: textarea fills the row; Ask button tall & same height */}
       <div className="p-2 bg-white border-t" style={{ borderColor: BRAND.border }}>
-        <div className="flex gap-2 items-end">
+        <div className="flex gap-2 items-stretch">
           <textarea
             className="flex-1 rounded-xl border px-3 py-2"
-            rows={3}
+            rows={4}
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={onKey}
             placeholder="Type your question…"
             style={{
               borderColor: BRAND.border,
-              fontSize: 14,             // bigger input font
-              lineHeight: '20px',
+              fontSize: 15,
+              lineHeight: '22px',
+              minHeight: 96,          // taller input
               resize: 'vertical',
-              minHeight: 60,
-              maxHeight: 160,
             }}
           />
           <button
             onClick={send}
             disabled={busy}
-            className="rounded-xl px-4 py-2 text-sm"
+            className="rounded-xl px-4 text-base font-medium h-full"
             style={{
-              background: BRAND.primary,
-              color: BRAND.primaryText,
-              opacity: busy ? 0.6 : 1,
+              background: BRAND.cta,
+              color: '#FFFFFF',
               boxShadow: '0 1px 2px rgba(0,0,0,.12)',
+              width: 96,              // fixed CTA width, rest is textarea
+              opacity: busy ? 0.6 : 1,
             }}
+            title="Ask (Enter to send; Shift+Enter for newline)"
           >
             Ask
           </button>
         </div>
-        <div className="text-[11px] mt-1" style={{ color: BRAND.subtle }}>Press Enter to send • Shift+Enter for a new line</div>
+        <div className="text-[11px] mt-1" style={{ color: BRAND.subtle }}>
+          Press Enter to send • Shift+Enter for a new line
+        </div>
       </div>
     </div>
   );
