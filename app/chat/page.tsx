@@ -64,13 +64,32 @@ function ChatInner() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ assistant_id: assistantId, thread_id: threadId, message: question }),
       });
+
+      // Friendly messages for common cases
+      if (res.status === 429) {
+        setMessages(m => [...m, {
+          role: 'assistant',
+          text: 'Sto ricevendo richieste troppo ravvicinate. Attendi un momento e riprova. / You’re sending requests too quickly. Please wait a moment and try again.',
+        }]);
+        return;
+      }
+      if (res.status === 413) {
+        const data = await res.json().catch(() => ({} as any));
+        const hint = data?.error || 'Your message is too long.';
+        setMessages(m => [...m, { role: 'assistant', text: hint }]);
+        return;
+      }
+
       const data = await res.json();
       const answer = data?.ok ? (data.text || '(no text)') : `Error: ${data?.error || 'unknown'}`;
       setMessages(m => [...m, { role: 'assistant', text: stripCitations(answer) }]);
     } catch (e: any) {
       setMessages(m => [...m, { role: 'assistant', text: `Network error: ${e?.message || e}` }]);
-    } finally { setBusy(false); }
+    } finally {
+      setBusy(false);
+    }
   }
+
 
   function onKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); }
