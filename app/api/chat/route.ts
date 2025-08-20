@@ -32,45 +32,16 @@ const stripCitations = (s: string) =>
     .replace(/\s{2,}/g, " ")
     .trim();
 
-// -------- VERY lightweight scope heuristic (fast, no extra API call) ---
-function isInScope(msg: string): boolean {
-  const s = (msg || "").toLowerCase();
-
-  // Strong indicators (model name / sheets / flows)
-  const strong = [
-    "hairbar", "hair bar", "haibar", // typos/variants
-    "conto economico", "cash flow", "flusso di cassa", "stato patrimoniale",
-    "scenario builder", "dashboard", "report", "foglio", "sheet", "workbook",
-    "excel", "formula", "celle", "macro", "piano finanziario",
-    "ricavi", "costi", "capex", "depre", "ammortament", "tfr", "oic", "ifrs",
-    "working capital", "fornitori", "magazzino", "inventario", "debiti", "crediti",
-  ];
-  if (strong.some(k => s.includes(k))) return true;
-
-  // Generic finance/model words + question verbs (helps short queries)
-  const maybe = [
-    "modello", "model", "finanziar", "conto", "cassa", "bilancio", "price", "prezzo", "volume",
-    "iva", "vat", "costo", "margine", "budget", "forecast", "scenario",
-  ];
-  const verbs = ["come", "dove", "in quale", "which", "how", "where", "update", "imposta", "aggiorna", "calcola"];
-  const hitMaybe = maybe.some(k => s.includes(k));
-  const hitVerb = verbs.some(v => s.includes(v));
-  return hitMaybe && hitVerb;
-}
-
-// -------- Decide when to replace answer with contact info ---------------
-function shouldUseContactFallback(text: string): boolean {
-  const t = (text || "").toLowerCase().trim();
-  if (!t) return true;                                  // empty = fallback
-  // Common “can’t answer” phrases (IT/EN)
-  const unsure = [
-    "non sono in grado", "non dispongo", "non posso rispondere",
-    "non ho informazioni sufficienti", "non riesco a trovare",
-    "i'm not able", "i cannot answer", "i don't have enough information",
-    "i don't have sufficient information", "unable to answer",
-  ];
-  return unsure.some(p => t.includes(p));
-}
+// -------- Extract only text parts from the newest assistant message -----
+const getAssistantText = (msg: any): string => {
+  if (!msg?.content) return "";
+  const out: string[] = [];
+  for (const c of msg.content) {
+    if (c && c.type === "text" && c.text && typeof c.text.value === "string") out.push(c.text.value);
+    else if (c && c.type === "output_text" && typeof c.text === "string") out.push(c.text);
+  }
+  return stripCitations(out.join("\n\n"));
+};
 
 // -------- Wait for a run to finish -------------------------------------
 async function waitForRun(threadId: string, runId: string, timeoutMs = 60000) {
@@ -89,18 +60,119 @@ async function waitForRun(threadId: string, runId: string, timeoutMs = 60000) {
   throw new Error("Timeout waiting for run.");
 }
 
-// -------- Extract only text parts from the newest assistant message -----
-const getAssistantText = (msg: any): string => {
-  if (!msg?.content) return "";
-  const out: string[] = [];
-  for (const c of msg.content) {
-    if (c && c.type === "text" && c.text && typeof c.text.value === "string") out.push(c.text.value);
-    else if (c && c.type === "output_text" && typeof c.text === "string") out.push(c.text);
-  }
-  return stripCitations(out.join("\n\n"));
-};
+/* =========================
+   S T A G E   A : Heuristic
+   ========================= */
+const STRONG_TERMS = [
+  // model / sheets / reports (IT/EN)
+  "hairbar", "hair bar", "haibar",
+  "conto economico", "cash flow", "flusso di cassa", "stato patrimoniale",
+  "scenario builder", "dashboard", "report", "reporting",
+  "foglio", "sheet", "workbook", "excel", "macro",
+  "aggiorna report", "recalc", "recalcolo",
+  // finance/accounting
+  "ricavi", "revenues", "fatturato", "costi", "capex",
+  "ammortament", "depreciat", "tfr", "oic", "ifrs",
+  "working capital", "capitale circolante", "fornitori", "clienti",
+  "magazzino", "inventario", "debiti", "crediti",
+  // inputs/actions typical in model
+  "prezzo", "price", "quantità", "volume", "assunzioni", "assumptions",
+  "parametri", "inputs", "impostazioni", "settings", "driver",
+];
 
-// ----------------------------- ROUTE -----------------------------------
+const MAYBE_TERMS = [
+  "modello", "model", "finanziar", "financial", "budget", "forecast", "scenario",
+  "iva", "vat", "margine", "margins", "costo", "costi", "price", "prezzo", "volume",
+  "alloca", "allocate", "imposta", "set", "aggiorna", "update", "inserire", "enter",
+  "simula", "simulate", "simulare", "simulazione", "aumento", "increase", "riduzione", "decrease",
+];
+
+const VERB_TRIGGERS = [
+  "come", "dove", "quale", "qual è", "which", "how", "where",
+  "update", "imposta", "inserire", "enter", "modific", "change", "simula", "simulate",
+];
+
+// very small helper: does text contain any token from list
+function hasAny(text: string, list: string[]) {
+  const s = text;
+  return list.some((k) => s.includes(k));
+}
+
+// Heuristic: be permissive; assume follow-ups are in-scope if recent context is model-related
+function heuristicInScope(msg: string, recentContext: string): boolean {
+  const s = (msg || "").toLowerCase();
+
+  // 1) Direct strong match in the message
+  if (hasAny(s, STRONG_TERMS)) return true;
+
+  // 2) Message has finance/model terms + action verbs
+  if (hasAny(s, MAYBE_TERMS) && hasAny(s, VERB_TRIGGERS)) return true;
+
+  // 3) Follow-up logic:
+  //    If recent context is clearly model-related, allow generic follow-ups
+  //    only when current message shows some intent (verbs) or finance terms.
+  const recent = (recentContext || "").toLowerCase();
+  const recentLooksModel = hasAny(recent, STRONG_TERMS) || hasAny(recent, MAYBE_TERMS);
+  if (recentLooksModel && (hasAny(s, VERB_TRIGGERS) || hasAny(s, MAYBE_TERMS))) {
+    return true;
+  }
+
+  // No artificial prefixing with "hairbar" — avoid smuggling keywords.
+  return false;
+}
+
+
+// pull last few messages to detect follow-up context (cheap)
+async function recentThreadText(threadId: string): Promise<string> {
+  try {
+    const page = await client.beta.threads.messages.list(threadId, { order: "desc", limit: 6 });
+    const bits: string[] = [];
+    for (const m of page.data) {
+      if (!m?.content) continue;
+      for (const c of m.content) {
+        if (c?.type === "text" && c?.text?.value) bits.push(c.text.value.toLowerCase());
+        else if (c?.type === "output_text" && typeof c.text === "string") bits.push(c.text.toLowerCase());
+      }
+    }
+    return bits.join(" ");
+  } catch {
+    return "";
+  }
+}
+
+/* =========================
+   S T A G E   B : LLM check
+   ========================= */
+// Only used when Stage A says out-of-scope
+async function llmScopeCheck(message: string, recentContext: string): Promise<boolean> {
+  try {
+    const prompt =
+      `Decidi se la richiesta è in ambito "uso e funzionamento del modello Excel HairBar" (finanza, rendiconti, fogli, input, simulazioni, ` +
+      `assunzioni, ricavi/costi, tasti/macro, navigazione). Considera anche il contesto recente.\n` +
+      `Rispondi SOLO con "IN" o "OUT".\n\n` +
+      `Contesto recente:\n${recentContext?.slice(0, 2000) || "(vuoto)"}\n\n` +
+      `Richiesta:\n${message}`;
+
+    const res = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0,
+      messages: [
+        { role: "system", content: "Sei un classificatore binario. Output solo 'IN' o 'OUT'." },
+        { role: "user", content: prompt },
+      ],
+    });
+
+    const out = (res.choices?.[0]?.message?.content || "").trim().toUpperCase();
+    return out.includes("IN");
+  } catch {
+    // Safety net: on any error, allow instead of blocking
+    return true;
+  }
+}
+
+/* =========================
+   R O U T E
+   ========================= */
 export async function POST(req: NextRequest) {
   try {
     // --- Throttle ---
@@ -139,9 +211,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Thread not allowed." }, { status: 403 });
     }
 
-    // --- PRE-FILTER: block unrelated queries before hitting the Assistant ---
-    if (!isInScope(message)) {
-      // Short, polite refusal + redirect to Studio Bellanti
+    // === PRE-FILTER (Stage A + Stage B) ===
+    const recent = await recentThreadText(thread_id);
+    let inScope = heuristicInScope(message, recent);
+    if (!inScope) {
+      inScope = await llmScopeCheck(message, recent);
+    }
+
+    if (!inScope) {
+      // Polite refusal + Studio Bellanti contact
       return NextResponse.json(
         {
           ok: true,
@@ -163,9 +241,9 @@ export async function POST(req: NextRequest) {
     const run = await client.beta.threads.runs.create(thread_id, {
       assistant_id,
       additional_instructions: `
-Stay strictly within the HairBar model scope (sheets, calculations, inputs/outputs, workflows). 
-If the documentation does not support a confident answer, do NOT guess; return a concise refusal and invite the user to contact Studio Bellanti at info@studiobellanti.com or their usual phone number. 
-Never include raw file names/paths/IDs or bracketed citations (e.g., 【12:...】) in the final text. 
+Stay strictly within the HairBar model scope (sheets, calculations, inputs/outputs, workflows).
+If the documentation does not support a confident answer, do NOT guess; return a concise refusal and invite the user to contact Studio Bellanti at info@studiobellanti.com or their usual phone number.
+Never include raw file names/paths/IDs or bracketed citations (e.g., 【12:...】) in the final text.
 Answer in the user's language and be concise (lists/steps when helpful).`.trim(),
     });
 
@@ -177,7 +255,14 @@ Answer in the user's language and be concise (lists/steps when helpful).`.trim()
     let text = getAssistantText(latestAssistant) || "";
 
     // --- POST-FILTER: if answer is empty/unsure, show Studio Bellanti contact ---
-    if (shouldUseContactFallback(text)) {
+    const t = text.toLowerCase().trim();
+    const unsure = [
+      "non sono in grado", "non dispongo", "non posso rispondere",
+      "non ho informazioni sufficienti", "non riesco a trovare",
+      "i'm not able", "i cannot answer", "i don't have enough information",
+      "i don't have sufficient information", "unable to answer",
+    ];
+    if (!t || unsure.some((p) => t.includes(p))) {
       text = contactLine;
     }
 
