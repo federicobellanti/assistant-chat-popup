@@ -128,10 +128,13 @@ async function recentThreadText(threadId: string): Promise<string> {
   try {
     const page = await client.beta.threads.messages.list(threadId, { order: "desc", limit: 6 });
     const bits: string[] = [];
-    for (const c of m.content) {
-  	if (c?.type === "text" && c?.text?.value) {
-    		bits.push(c.text.value.toLowerCase());
-  	}
+    for (const msg of page.data) {
+      if (!msg?.content) continue;
+      for (const c of msg.content) {
+        if (c?.type === "text" && typeof c?.text?.value === "string") {
+          bits.push(c.text.value.toLowerCase());
+        }
+      }
     }
     return bits.join(" ");
   } catch {
