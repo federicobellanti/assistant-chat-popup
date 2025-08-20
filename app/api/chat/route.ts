@@ -37,8 +37,9 @@ const getAssistantText = (msg: any): string => {
   if (!msg?.content) return "";
   const out: string[] = [];
   for (const c of msg.content) {
-    if (c && c.type === "text" && c.text && typeof c.text.value === "string") out.push(c.text.value);
-    else if (c && c.type === "output_text" && typeof c.text === "string") out.push(c.text);
+    if (c?.type === "text" && typeof c?.text?.value === "string") {
+      out.push(c.text.value);
+    }
   }
   return stripCitations(out.join("\n\n"));
 };
@@ -127,12 +128,10 @@ async function recentThreadText(threadId: string): Promise<string> {
   try {
     const page = await client.beta.threads.messages.list(threadId, { order: "desc", limit: 6 });
     const bits: string[] = [];
-    for (const m of page.data) {
-      if (!m?.content) continue;
-      for (const c of m.content) {
-        if (c?.type === "text" && c?.text?.value) bits.push(c.text.value.toLowerCase());
-        else if (c?.type === "output_text" && typeof c.text === "string") bits.push(c.text.toLowerCase());
-      }
+    for (const c of m.content) {
+  	if (c?.type === "text" && c?.text?.value) {
+    		bits.push(c.text.value.toLowerCase());
+  	}
     }
     return bits.join(" ");
   } catch {
